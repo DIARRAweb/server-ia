@@ -1,0 +1,16 @@
+
+{
+  "name": "malipay-ai-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "malipay-ai-server.js",
+  "scripts": {
+    "start": "node malipay-ai-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "openai": "^4.56.0"
+  }
+}
