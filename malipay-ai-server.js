@@ -126,6 +126,7 @@ const ALLOWED_INTENTS = [
   "OPEN_SERVICES",
   "OPEN_HISTORY",
 
+  /* Transfert instantané */
   "TRANSFER_INSTANT",
   "TRANSFER_COLLECTING",
   "TRANSFER_READY",
@@ -135,6 +136,16 @@ const ALLOWED_INTENTS = [
   "TRANSFER_COMPLETED",
   "TRANSFER_FAILED",
 
+  /* Transfert programmé */
+  "SCHEDULED_TRANSFER_COLLECTING",
+  "SCHEDULED_TRANSFER_READY",
+  "SCHEDULED_TRANSFER_SHOW_RECEIPT",
+  "SCHEDULED_TRANSFER_CONFIRM",
+  "SCHEDULED_TRANSFER_CANCEL",
+  "SCHEDULED_TRANSFER_COMPLETED",
+  "SCHEDULED_TRANSFER_FAILED",
+
+  /* Compatibilité ancienne version */
   "TRANSFER_SCHEDULED",
 
   "REMEMBER_USER_INFO",
@@ -154,6 +165,7 @@ const ALLOWED_ACTIONS = [
   "openServicesPortal",
   "toggleHistory",
 
+  /* Transfert instantané */
   "fillTransferFormOnly",
   "collectTransferInformation",
   "prepareTransferReceipt",
@@ -161,7 +173,13 @@ const ALLOWED_ACTIONS = [
   "confirmTransfer",
   "cancelTransfer",
 
+  /* Transfert programmé */
   "fillScheduledTransferFormOnly",
+  "collectScheduledTransferInformation",
+  "prepareScheduledTransferReceipt",
+  "requestScheduledTransferConfirmation",
+  "confirmScheduledTransfer",
+  "cancelScheduledTransfer",
 
   "readMessages",
   "readOneMessage",
@@ -199,6 +217,23 @@ const TRANSFER_FIELDS = [
   "amount",
   "feePayer",
   "reason"
+];
+
+const SCHEDULED_TRANSFER_FIELDS = [
+  "phone",
+  "amount",
+  "feePayer",
+  "reason",
+  "scheduleDate",
+  "repeatType"
+];
+
+const ALLOWED_REPEAT_TYPES = [
+  "",
+  "once",
+  "minute",
+  "daily",
+  "monthly"
 ];
 
 /* =========================================================
@@ -259,7 +294,16 @@ Le format obligatoire est :
       "feePayer": "",
       "reason": ""
     },
+    "scheduledTransfer": {
+      "phone": "",
+      "amount": null,
+      "feePayer": "",
+      "reason": "",
+      "scheduleDate": "",
+      "repeatType": ""
+    },
     "missingFields": [],
+    "missingScheduledFields": [],
     "messageQuery": {
       "name": "",
       "phone": "",
@@ -512,6 +556,155 @@ requiresExplicitConfirmation true
 Demande une formulation parfaitement claire.
 
 ==================================================
+TRANSFERT PROGRAMMÉ
+==================================================
+
+Un transfert programmé possède les champs suivants :
+
+- phone : numéro du destinataire ;
+- amount : montant à envoyer ;
+- feePayer : sender ou receiver ;
+- reason : motif, éventuellement vide si l’utilisateur le demande clairement ;
+- scheduleDate : date et heure futures au format ISO local YYYY-MM-DDTHH:mm ;
+- repeatType : once, minute, daily ou monthly.
+
+Correspondance des répétitions :
+
+- une seule fois = once
+- chaque minute = minute
+- tous les jours ou chaque jour = daily
+- tous les mois ou chaque mois = monthly
+
+Quand l’utilisateur parle de :
+
+- programmer un transfert ;
+- planifier un transfert ;
+- envoyer plus tard ;
+- envoyer demain ;
+- envoyer à une date ou une heure future ;
+
+il s’agit obligatoirement d’un transfert programmé et non d’un transfert instantané.
+
+À chaque intervention :
+
+1. Lis context.pendingScheduledTransfer.
+2. Conserve toutes les informations déjà connues.
+3. Extrais seulement les nouvelles informations.
+4. Fusionne les anciennes et les nouvelles informations.
+5. Ne redemande jamais une information déjà connue.
+6. Demande un seul champ manquant à la fois lorsque cela rend la conversation plus naturelle.
+7. Place tous les champs encore absents dans data.missingScheduledFields.
+
+Si phone manque :
+
+intent SCHEDULED_TRANSFER_COLLECTING
+action collectScheduledTransferInformation
+target scheduledTransferBox
+
+Si amount manque :
+
+intent SCHEDULED_TRANSFER_COLLECTING
+action collectScheduledTransferInformation
+target scheduledTransferBox
+
+Si feePayer manque :
+
+intent SCHEDULED_TRANSFER_COLLECTING
+action collectScheduledTransferInformation
+target scheduledTransferBox
+
+Si reason manque :
+
+- demande le motif ;
+- précise que l’utilisateur peut dire sans motif ou laisse vide.
+
+Si scheduleDate manque :
+
+- demande la date et l’heure exactes ;
+- comprends notamment demain, après-demain, lundi prochain et les heures prononcées ;
+- utilise currentDateTime et timezone fournis dans le contexte ;
+- ne choisis jamais arbitrairement une heure absente.
+
+Si repeatType manque :
+
+demande si le transfert doit être effectué :
+
+- une seule fois ;
+- chaque minute ;
+- chaque jour ;
+- chaque mois.
+
+Quand tous les champs sont disponibles :
+
+intent SCHEDULED_TRANSFER_READY
+action prepareScheduledTransferReceipt
+target scheduledTransferBox
+
+Ne dis pas que l’argent a été envoyé.
+Ne dis pas que le transfert est déjà programmé.
+Indique seulement que la facture de programmation va être préparée.
+
+==================================================
+FACTURE DU TRANSFERT PROGRAMMÉ
+==================================================
+
+Lorsque context.scheduledReceipt.visible vaut true :
+
+- lis uniquement context.scheduledReceipt.text ;
+- présente toutes les informations visibles ;
+- indique le destinataire ;
+- indique son numéro ;
+- indique le montant envoyé ;
+- indique le montant reçu ;
+- indique les frais ;
+- indique qui paie les frais ;
+- indique la date et l’heure programmées ;
+- indique la répétition ;
+- indique le motif ;
+- indique l’identifiant de transaction ;
+- explique que l’argent ne partira qu’à la date prévue ;
+- demande une confirmation stricte.
+
+Utilise :
+
+intent SCHEDULED_TRANSFER_SHOW_RECEIPT
+action requestScheduledTransferConfirmation
+target receiptBox
+requiresExplicitConfirmation true
+
+La confirmation doit être explicite.
+
+Exemples acceptés :
+
+- je confirme le transfert programmé
+- je confirme la programmation
+- confirme le transfert programmé
+- valide la programmation
+- programme ce transfert
+
+Utilise alors :
+
+intent SCHEDULED_TRANSFER_CONFIRM
+action confirmScheduledTransfer
+target receiptBox
+requiresExplicitConfirmation true
+
+Pour annuler :
+
+- annule le transfert programmé
+- annule la programmation
+- je refuse
+- ne programme pas ce transfert
+
+Utilise :
+
+intent SCHEDULED_TRANSFER_CANCEL
+action cancelScheduledTransfer
+target receiptBox
+
+Une réponse ambiguë ne confirme jamais la programmation.
+
+==================================================
 MESSAGES
 ==================================================
 
@@ -614,11 +807,27 @@ function createDefaultTransfer() {
   };
 }
 
+function createDefaultScheduledTransfer() {
+  return {
+    phone: "",
+    amount: null,
+    feePayer: "",
+    reason: "",
+    scheduleDate: "",
+    repeatType: ""
+  };
+}
+
 function createDefaultData() {
   return {
     transfer: createDefaultTransfer(),
 
+    scheduledTransfer:
+      createDefaultScheduledTransfer(),
+
     missingFields: [],
+
+    missingScheduledFields: [],
 
     messageQuery: {
       name: "",
@@ -714,6 +923,40 @@ function normalizeFeePayer(value) {
     value === "receiver"
     ? value
     : "";
+}
+
+function normalizeRepeatType(value) {
+  const repeatType = cleanString(
+    value,
+    30
+  ).toLowerCase();
+
+  return ALLOWED_REPEAT_TYPES.includes(
+    repeatType
+  )
+    ? repeatType
+    : "";
+}
+
+
+function normalizeScheduleDate(value) {
+  const scheduleDate = cleanString(
+    value,
+    100
+  );
+
+  if (!scheduleDate) {
+    return "";
+  }
+
+  const timestamp =
+    new Date(scheduleDate).getTime();
+
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+
+  return scheduleDate;
 }
 
 /* =========================================================
@@ -1017,6 +1260,12 @@ function normalizeAIResponse(ai) {
       ? rawData.transfer
       : {};
 
+  const rawScheduledTransfer =
+  rawData.scheduledTransfer &&
+  typeof rawData.scheduledTransfer === "object"
+    ? rawData.scheduledTransfer
+    : {};
+
   const transfer = {
     phone: normalizePhone(
       rawTransfer.phone
@@ -1036,6 +1285,33 @@ function normalizeAIResponse(ai) {
     )
   };
 
+  const scheduledTransfer = {
+  phone: normalizePhone(
+    rawScheduledTransfer.phone
+  ),
+
+  amount: normalizeAmount(
+    rawScheduledTransfer.amount
+  ),
+
+  feePayer: normalizeFeePayer(
+    rawScheduledTransfer.feePayer
+  ),
+
+  reason: sanitizeSensitiveText(
+    rawScheduledTransfer.reason || "",
+    300
+  ),
+
+  scheduleDate: normalizeScheduleDate(
+    rawScheduledTransfer.scheduleDate
+  ),
+
+  repeatType: normalizeRepeatType(
+    rawScheduledTransfer.repeatType
+  )
+};
+
   const missingFields =
     Array.isArray(rawData.missingFields)
       ? [
@@ -1049,6 +1325,20 @@ function normalizeAIResponse(ai) {
           )
         ]
       : [];
+
+      const missingScheduledFields =
+  Array.isArray(rawData.missingScheduledFields)
+    ? [
+        ...new Set(
+          rawData.missingScheduledFields.filter(
+            field =>
+              SCHEDULED_TRANSFER_FIELDS.includes(
+                field
+              )
+          )
+        )
+      ]
+    : [];
 
   const rawMessageQuery =
     rawData.messageQuery &&
@@ -1094,7 +1384,9 @@ function normalizeAIResponse(ai) {
 
     data: {
       transfer,
+      scheduledTransfer,
       missingFields,
+      missingScheduledFields,
       messageQuery,
       memoryCandidate,
 
@@ -1178,6 +1470,66 @@ function getExplicitTransferDecision(text) {
   return "unclear";
 }
 
+function getExplicitScheduledTransferDecision(text) {
+  const normalized =
+    normalizeDecisionText(text);
+
+
+  const cancellationPatterns = [
+    /^annule le transfert programme$/,
+    /^annule la programmation$/,
+    /^annuler le transfert programme$/,
+    /^annuler la programmation$/,
+    /^je refuse$/,
+    /^je refuse la programmation$/,
+    /^ne programme pas ce transfert$/,
+    /^ne confirme pas la programmation$/,
+    /^je ne confirme pas la programmation$/,
+    /^abandonne le transfert programme$/,
+    /^abandonne la programmation$/
+  ];
+
+
+  const confirmationPatterns = [
+    /^je confirme le transfert programme$/,
+    /^je confirme la programmation$/,
+    /^oui je confirme le transfert programme$/,
+    /^oui je confirme la programmation$/,
+    /^confirme le transfert programme$/,
+    /^confirme la programmation$/,
+    /^valide le transfert programme$/,
+    /^valide la programmation$/,
+    /^programme ce transfert$/,
+    /^programme le transfert$/,
+    /^confirme cette programmation$/
+  ];
+
+
+  /*
+  L’annulation est volontairement testée avant
+  la confirmation pour éviter toute ambiguïté.
+  */
+  if (
+    cancellationPatterns.some(
+      pattern => pattern.test(normalized)
+    )
+  ) {
+    return "cancel";
+  }
+
+
+  if (
+    confirmationPatterns.some(
+      pattern => pattern.test(normalized)
+    )
+  ) {
+    return "confirm";
+  }
+
+
+  return "unclear";
+}
+
 /* =========================================================
    🧾 LECTURE FIABLE DE LA FACTURE
 ========================================================= */
@@ -1238,6 +1590,42 @@ function buildReceiptReadingReply(context) {
     ". Vérifiez attentivement ces informations. " +
     "Pour confirmer et envoyer réellement l’argent, dites exactement : je confirme le transfert. " +
     "Pour abandonner l’opération, dites : annule le transfert."
+  );
+}
+
+function buildScheduledReceiptReadingReply(context) {
+  const scheduledReceipt =
+    context?.scheduledReceipt &&
+    typeof context.scheduledReceipt === "object"
+      ? context.scheduledReceipt
+      : {};
+
+
+  const receiptText = cleanReceiptText(
+    scheduledReceipt.text || ""
+  );
+
+
+  if (!receiptText) {
+    return (
+      "La facture du transfert programmé est affichée, " +
+      "mais je n’ai pas pu lire correctement ses informations. " +
+      "Vérifiez-la visuellement. " +
+      "Pour confirmer, dites exactement : je confirme le transfert programmé. " +
+      "Pour annuler, dites : annule le transfert programmé."
+    );
+  }
+
+
+  return (
+    "La facture du transfert programmé est maintenant affichée. " +
+    "Je vais vous lire toutes les informations avant d’enregistrer la programmation. " +
+    receiptText +
+    ". L’argent ne sera pas envoyé maintenant. " +
+    "Il sera envoyé automatiquement à la date programmée, " +
+    "sous réserve que le compte soit valide et que le solde soit suffisant au moment de l’exécution. " +
+    "Pour confirmer, dites exactement : je confirme le transfert programmé. " +
+    "Pour annuler, dites : annule le transfert programmé."
   );
 }
 
@@ -1470,6 +1858,7 @@ function handleDeterministicRequest({
   const assistantState =
     context?.assistantState || {};
 
+
   const voiceStep = cleanString(
     assistantState.voiceStep ||
     context?.voiceStep ||
@@ -1477,22 +1866,172 @@ function handleDeterministicRequest({
     100
   );
 
+
   const transferDecision =
     context?.transferDecision ||
     getExplicitTransferDecision(
       userText
     );
 
+
+  const scheduledTransferDecision =
+    context?.scheduledTransferDecision ||
+    getExplicitScheduledTransferDecision(
+      userText
+    );
+
+
   const receiptVisible =
     context?.receipt?.visible === true;
+
 
   const hasPendingTransfer =
     context?.receipt
       ?.hasPendingTransfer === true;
 
+
+  const scheduledReceiptVisible =
+    context?.scheduledReceipt
+      ?.visible === true;
+
+
+  const hasPendingScheduledTransfer =
+    context?.scheduledReceipt
+      ?.hasPendingScheduledTransfer === true;
+
+
   /*
-  Événement envoyé par le dashboard
-  lorsque la facture est prête.
+  ========================================================
+  FACTURE DU TRANSFERT PROGRAMMÉ PRÊTE
+  ========================================================
+  */
+  if (
+    userText ===
+      "__SCHEDULED_TRANSFER_RECEIPT_READY__" ||
+    context?.systemEvent ===
+      "SCHEDULED_TRANSFER_RECEIPT_READY"
+  ) {
+    return createResponse({
+      intent:
+        "SCHEDULED_TRANSFER_SHOW_RECEIPT",
+
+
+      action:
+        "requestScheduledTransferConfirmation",
+
+
+      target:
+        "receiptBox",
+
+
+      reply:
+        buildScheduledReceiptReadingReply(
+          context
+        ),
+
+
+      data: {
+        scheduledTransfer:
+          context?.pendingScheduledTransfer ||
+          createDefaultScheduledTransfer(),
+
+
+        missingScheduledFields: [],
+
+
+        requiresExplicitConfirmation:
+          true
+      }
+    });
+  }
+
+
+  /*
+  ========================================================
+  ÉCHEC D’AFFICHAGE DE LA FACTURE PROGRAMMÉE
+  ========================================================
+  */
+  if (
+    userText ===
+      "__SCHEDULED_TRANSFER_RECEIPT_FAILED__" ||
+    context?.systemEvent ===
+      "SCHEDULED_TRANSFER_RECEIPT_FAILED"
+  ) {
+    return createResponse({
+      intent:
+        "SCHEDULED_TRANSFER_FAILED",
+
+
+      action:
+        "speakOnly",
+
+
+      target:
+        "scheduledTransferBox",
+
+
+      reply:
+        "La facture du transfert programmé n’a pas pu s’afficher correctement. Vérifiez le destinataire, le montant, la date, l’heure et la répétition. Aucun transfert n’a été programmé.",
+
+
+      data: {
+        scheduledTransfer:
+          context?.pendingScheduledTransfer ||
+          createDefaultScheduledTransfer(),
+
+
+        requiresExplicitConfirmation:
+          false
+      }
+    });
+  }
+
+
+  /*
+  ========================================================
+  ERREUR DE PRÉPARATION DU TRANSFERT PROGRAMMÉ
+  ========================================================
+  */
+  if (
+    userText ===
+      "__SCHEDULED_TRANSFER_PREPARATION_ERROR__" ||
+    context?.systemEvent ===
+      "SCHEDULED_TRANSFER_PREPARATION_ERROR"
+  ) {
+    return createResponse({
+      intent:
+        "SCHEDULED_TRANSFER_FAILED",
+
+
+      action:
+        "speakOnly",
+
+
+      target:
+        "scheduledTransferBox",
+
+
+      reply:
+        "Je n’ai pas pu préparer la facture du transfert programmé. Vérifiez les informations puis réessayez. Aucun transfert n’a été programmé.",
+
+
+      data: {
+        scheduledTransfer:
+          context?.pendingScheduledTransfer ||
+          createDefaultScheduledTransfer(),
+
+
+        requiresExplicitConfirmation:
+          false
+      }
+    });
+  }
+
+
+  /*
+  ========================================================
+  FACTURE DU TRANSFERT INSTANTANÉ PRÊTE
+  ========================================================
   */
   if (
     userText ===
@@ -1501,22 +2040,32 @@ function handleDeterministicRequest({
       "TRANSFER_RECEIPT_READY"
   ) {
     return createResponse({
-      intent: "TRANSFER_SHOW_RECEIPT",
+      intent:
+        "TRANSFER_SHOW_RECEIPT",
+
+
       action:
         "requestTransferConfirmation",
-      target: "receiptBox",
+
+
+      target:
+        "receiptBox",
+
 
       reply:
         buildReceiptReadingReply(
           context
         ),
 
+
       data: {
         transfer:
           context?.pendingTransfer ||
           createDefaultTransfer(),
 
+
         missingFields: [],
+
 
         requiresExplicitConfirmation:
           true
@@ -1524,8 +2073,11 @@ function handleDeterministicRequest({
     });
   }
 
+
   /*
-  La facture n’a pas pu s’afficher.
+  ========================================================
+  ÉCHEC D’AFFICHAGE DE LA FACTURE INSTANTANÉE
+  ========================================================
   */
   if (
     userText ===
@@ -1534,12 +2086,21 @@ function handleDeterministicRequest({
       "TRANSFER_RECEIPT_FAILED"
   ) {
     return createResponse({
-      intent: "TRANSFER_FAILED",
-      action: "speakOnly",
-      target: null,
+      intent:
+        "TRANSFER_FAILED",
+
+
+      action:
+        "speakOnly",
+
+
+      target:
+        null,
+
 
       reply:
         "La facture n’a pas pu s’afficher correctement. Vérifiez le numéro, le montant, les frais et le solde, puis recommencez l’opération.",
+
 
       data: {
         requiresExplicitConfirmation:
@@ -1548,8 +2109,11 @@ function handleDeterministicRequest({
     });
   }
 
+
   /*
-  Erreur pendant la préparation de la facture.
+  ========================================================
+  ERREUR DE PRÉPARATION DU TRANSFERT INSTANTANÉ
+  ========================================================
   */
   if (
     userText ===
@@ -1558,17 +2122,27 @@ function handleDeterministicRequest({
       "TRANSFER_PREPARATION_ERROR"
   ) {
     return createResponse({
-      intent: "TRANSFER_FAILED",
-      action: "speakOnly",
-      target: "transferBox",
+      intent:
+        "TRANSFER_FAILED",
+
+
+      action:
+        "speakOnly",
+
+
+      target:
+        "transferBox",
+
 
       reply:
         "Je n’ai pas pu préparer la facture. Vérifiez les informations du transfert puis réessayez. L’argent n’a pas été envoyé.",
+
 
       data: {
         transfer:
           context?.pendingTransfer ||
           createDefaultTransfer(),
+
 
         requiresExplicitConfirmation:
           false
@@ -1576,8 +2150,11 @@ function handleDeterministicRequest({
     });
   }
 
+
   /*
-  Démarrage de la session de Mady.
+  ========================================================
+  DÉMARRAGE DE LA SESSION
+  ========================================================
   */
   if (
     userText ===
@@ -1589,19 +2166,24 @@ function handleDeterministicRequest({
       context?.user?.name ||
       "cher utilisateur";
 
+
     const messages =
       getMessagesFromContext(context);
+
 
     const preferredName =
       context?.memory?.profile
         ?.preferredName;
 
+
     const finalName =
       preferredName ||
       userName;
 
+
     let reply =
       `Bonjour ${finalName}. Je suis Mady DIARRA, votre assistante MaliPay. `;
+
 
     if (messages.length > 0) {
       const senders = [
@@ -1614,11 +2196,14 @@ function handleDeterministicRequest({
         )
       ];
 
+
       reply +=
         `Vous avez ${messages.length} message` +
-        (messages.length > 1
-          ? "s"
-          : "") +
+        (
+          messages.length > 1
+            ? "s"
+            : ""
+        ) +
         `, notamment de ${senders
           .slice(0, 3)
           .join(", ")}. `;
@@ -1627,20 +2212,155 @@ function handleDeterministicRequest({
         "Votre boîte de messages est calme pour le moment. ";
     }
 
+
     reply +=
       "Que puis-je faire pour vous ? Et rassurez-vous, je suis réveillée : mon café est entièrement numérique.";
 
+
     return createResponse({
-      intent: "SMALL_TALK",
-      action: "speakOnly",
-      target: null,
+      intent:
+        "SMALL_TALK",
+
+
+      action:
+        "speakOnly",
+
+
+      target:
+        null,
+
+
       reply
     });
   }
 
+
   /*
-  Confirmation ou annulation pendant l’attente
-  de validation de la facture.
+  ========================================================
+  CONFIRMATION DU TRANSFERT PROGRAMMÉ
+  ========================================================
+  */
+  const awaitingScheduledConfirmation =
+    voiceStep ===
+      "awaiting_scheduled_transfer_confirmation" ||
+    (
+      scheduledReceiptVisible &&
+      hasPendingScheduledTransfer
+    );
+
+
+  if (awaitingScheduledConfirmation) {
+    if (
+      scheduledTransferDecision ===
+        "confirm"
+    ) {
+      return createResponse({
+        intent:
+          "SCHEDULED_TRANSFER_CONFIRM",
+
+
+        action:
+          "confirmScheduledTransfer",
+
+
+        target:
+          "receiptBox",
+
+
+        reply:
+          "Confirmation explicite reçue. Je lance maintenant l’enregistrement sécurisé du transfert programmé.",
+
+
+        data: {
+          scheduledTransfer:
+            context?.pendingScheduledTransfer ||
+            createDefaultScheduledTransfer(),
+
+
+          missingScheduledFields: [],
+
+
+          requiresExplicitConfirmation:
+            true
+        }
+      });
+    }
+
+
+    if (
+      scheduledTransferDecision ===
+        "cancel"
+    ) {
+      return createResponse({
+        intent:
+          "SCHEDULED_TRANSFER_CANCEL",
+
+
+        action:
+          "cancelScheduledTransfer",
+
+
+        target:
+          "receiptBox",
+
+
+        reply:
+          "La programmation est annulée. Aucun transfert ne sera enregistré et aucun argent ne sera envoyé.",
+
+
+        data: {
+          scheduledTransfer:
+            context?.pendingScheduledTransfer ||
+            createDefaultScheduledTransfer(),
+
+
+          missingScheduledFields: [],
+
+
+          requiresExplicitConfirmation:
+            false
+        }
+      });
+    }
+
+
+    return createResponse({
+      intent:
+        "SCHEDULED_TRANSFER_SHOW_RECEIPT",
+
+
+      action:
+        "requestScheduledTransferConfirmation",
+
+
+      target:
+        "receiptBox",
+
+
+      reply:
+        "Votre réponse n’est pas assez explicite. Pour confirmer, dites exactement : je confirme le transfert programmé. Pour annuler, dites : annule le transfert programmé.",
+
+
+      data: {
+        scheduledTransfer:
+          context?.pendingScheduledTransfer ||
+          createDefaultScheduledTransfer(),
+
+
+        missingScheduledFields: [],
+
+
+        requiresExplicitConfirmation:
+          true
+      }
+    });
+  }
+
+
+  /*
+  ========================================================
+  CONFIRMATION DU TRANSFERT INSTANTANÉ
+  ========================================================
   */
   const awaitingConfirmation =
     voiceStep ===
@@ -1650,24 +2370,37 @@ function handleDeterministicRequest({
       hasPendingTransfer
     );
 
+
   if (awaitingConfirmation) {
     if (
-      transferDecision === "confirm"
+      transferDecision ===
+        "confirm"
     ) {
       return createResponse({
-        intent: "TRANSFER_CONFIRM",
-        action: "confirmTransfer",
-        target: "receiptBox",
+        intent:
+          "TRANSFER_CONFIRM",
+
+
+        action:
+          "confirmTransfer",
+
+
+        target:
+          "receiptBox",
+
 
         reply:
           "Confirmation explicite reçue. Je lance maintenant la validation sécurisée du transfert.",
+
 
         data: {
           transfer:
             context?.pendingTransfer ||
             createDefaultTransfer(),
 
+
           missingFields: [],
+
 
           requiresExplicitConfirmation:
             true
@@ -1675,23 +2408,36 @@ function handleDeterministicRequest({
       });
     }
 
+
     if (
-      transferDecision === "cancel"
+      transferDecision ===
+        "cancel"
     ) {
       return createResponse({
-        intent: "TRANSFER_CANCEL",
-        action: "cancelTransfer",
-        target: "receiptBox",
+        intent:
+          "TRANSFER_CANCEL",
+
+
+        action:
+          "cancelTransfer",
+
+
+        target:
+          "receiptBox",
+
 
         reply:
           "Le transfert est annulé. Aucun argent ne sera envoyé. Mieux vaut une vérification de plus qu’un franc envoyé au mauvais endroit.",
+
 
         data: {
           transfer:
             context?.pendingTransfer ||
             createDefaultTransfer(),
 
+
           missingFields: [],
+
 
           requiresExplicitConfirmation:
             false
@@ -1699,27 +2445,39 @@ function handleDeterministicRequest({
       });
     }
 
+
     return createResponse({
-      intent: "TRANSFER_SHOW_RECEIPT",
+      intent:
+        "TRANSFER_SHOW_RECEIPT",
+
+
       action:
         "requestTransferConfirmation",
-      target: "receiptBox",
+
+
+      target:
+        "receiptBox",
+
 
       reply:
         "Votre réponse n’est pas assez explicite pour autoriser une opération financière. Pour confirmer, dites exactement : je confirme le transfert. Pour annuler, dites : annule le transfert.",
+
 
       data: {
         transfer:
           context?.pendingTransfer ||
           createDefaultTransfer(),
 
+
         missingFields: [],
+
 
         requiresExplicitConfirmation:
           true
       }
     });
   }
+
 
   return null;
 }
@@ -1871,12 +2629,16 @@ function enforceFinancialSafety({
 const RESPONSE_JSON_SCHEMA = {
   name: "malipay_mady_response",
 
+
   strict: true,
+
 
   schema: {
     type: "object",
 
+
     additionalProperties: false,
+
 
     required: [
       "intent",
@@ -1886,24 +2648,28 @@ const RESPONSE_JSON_SCHEMA = {
       "data"
     ],
 
+
     properties: {
       intent: {
         type: "string",
         enum: ALLOWED_INTENTS
       },
 
+
       action: {
         type: "string",
         enum: ALLOWED_ACTIONS
       },
 
+
       target: {
         anyOf: [
           {
             type: "string",
-            enum: ALLOWED_TARGETS.filter(
-              value => value !== null
-            )
+            enum:
+              ALLOWED_TARGETS.filter(
+                value => value !== null
+              )
           },
           {
             type: "null"
@@ -1911,28 +2677,37 @@ const RESPONSE_JSON_SCHEMA = {
         ]
       },
 
+
       reply: {
         type: "string"
       },
 
+
       data: {
         type: "object",
 
+
         additionalProperties: false,
+
 
         required: [
           "transfer",
+          "scheduledTransfer",
           "missingFields",
+          "missingScheduledFields",
           "messageQuery",
           "memoryCandidate",
           "requiresExplicitConfirmation"
         ],
 
+
         properties: {
           transfer: {
             type: "object",
 
+
             additionalProperties: false,
+
 
             required: [
               "phone",
@@ -1941,10 +2716,12 @@ const RESPONSE_JSON_SCHEMA = {
               "reason"
             ],
 
+
             properties: {
               phone: {
                 type: "string"
               },
+
 
               amount: {
                 anyOf: [
@@ -1957,6 +2734,7 @@ const RESPONSE_JSON_SCHEMA = {
                 ]
               },
 
+
               feePayer: {
                 type: "string",
                 enum: [
@@ -1966,25 +2744,108 @@ const RESPONSE_JSON_SCHEMA = {
                 ]
               },
 
+
               reason: {
                 type: "string"
               }
             }
           },
 
+
+          scheduledTransfer: {
+            type: "object",
+
+
+            additionalProperties: false,
+
+
+            required: [
+              "phone",
+              "amount",
+              "feePayer",
+              "reason",
+              "scheduleDate",
+              "repeatType"
+            ],
+
+
+            properties: {
+              phone: {
+                type: "string"
+              },
+
+
+              amount: {
+                anyOf: [
+                  {
+                    type: "number"
+                  },
+                  {
+                    type: "null"
+                  }
+                ]
+              },
+
+
+              feePayer: {
+                type: "string",
+                enum: [
+                  "",
+                  "sender",
+                  "receiver"
+                ]
+              },
+
+
+              reason: {
+                type: "string"
+              },
+
+
+              scheduleDate: {
+                type: "string"
+              },
+
+
+              repeatType: {
+                type: "string",
+                enum:
+                  ALLOWED_REPEAT_TYPES
+              }
+            }
+          },
+
+
           missingFields: {
             type: "array",
 
+
             items: {
               type: "string",
-              enum: TRANSFER_FIELDS
+              enum:
+                TRANSFER_FIELDS
             }
           },
+
+
+          missingScheduledFields: {
+            type: "array",
+
+
+            items: {
+              type: "string",
+              enum:
+                SCHEDULED_TRANSFER_FIELDS
+            }
+          },
+
 
           messageQuery: {
             type: "object",
 
+
             additionalProperties: false,
+
 
             required: [
               "name",
@@ -1992,14 +2853,17 @@ const RESPONSE_JSON_SCHEMA = {
               "messageId"
             ],
 
+
             properties: {
               name: {
                 type: "string"
               },
 
+
               phone: {
                 type: "string"
               },
+
 
               messageId: {
                 type: "string"
@@ -2007,16 +2871,20 @@ const RESPONSE_JSON_SCHEMA = {
             }
           },
 
+
           memoryCandidate: {
             anyOf: [
               {
                 type: "null"
               },
 
+
               {
                 type: "object",
 
+
                 additionalProperties: false,
+
 
                 required: [
                   "category",
@@ -2026,6 +2894,7 @@ const RESPONSE_JSON_SCHEMA = {
                   "sourceText"
                 ],
 
+
                 properties: {
                   category: {
                     type: "string",
@@ -2033,9 +2902,11 @@ const RESPONSE_JSON_SCHEMA = {
                       ALLOWED_MEMORY_CATEGORIES
                   },
 
+
                   key: {
                     type: "string"
                   },
+
 
                   value: {
                     anyOf: [
@@ -2054,9 +2925,11 @@ const RESPONSE_JSON_SCHEMA = {
                     ]
                   },
 
+
                   confidence: {
                     type: "number"
                   },
+
 
                   sourceText: {
                     type: "string"
@@ -2065,6 +2938,7 @@ const RESPONSE_JSON_SCHEMA = {
               }
             ]
           },
+
 
           requiresExplicitConfirmation: {
             type: "boolean"
