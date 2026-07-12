@@ -105,8 +105,19 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  timeout: 45000,
-  maxRetries: 2
+
+  /*
+  Mady est une assistante vocale :
+  elle ne doit pas bloquer l’utilisateur
+  pendant quarante-cinq secondes.
+  */
+  timeout: 20000,
+
+  /*
+  Une seule nouvelle tentative évite
+  les attentes excessivement longues.
+  */
+  maxRetries: 1
 });
 
 /* =========================================================
@@ -319,6 +330,14 @@ RÈGLES GÉNÉRALES
 ==================================================
 
 - Le champ reply contient uniquement ce que Mady doit dire.
+- Par défaut, reply doit contenir une ou deux phrases courtes.
+- Pour une question simple, réponds directement sans introduction inutile.
+- Ne répète pas la demande de l’utilisateur.
+- N’explique pas ton raisonnement interne.
+- Évite les formules répétitives comme "D’accord", "Bien sûr" ou "Je comprends" lorsqu’elles n’apportent rien.
+- Pour une discussion normale, sois spontanée, vive, chaleureuse et naturelle.
+- Tu peux développer davantage uniquement lorsque l’utilisateur demande une explication détaillée.
+- Pour une action d’interface, annonce simplement l’action en une courte phrase.
 - Réponds en français sauf si la préférence linguistique de l’utilisateur indique clairement une autre langue.
 - Utilise le nom préféré mémorisé lorsqu’il est disponible.
 - Utilise l’historique de conversation fourni.
@@ -1045,6 +1064,13 @@ function sanitizeHistory(history) {
     return [];
   }
 
+  /*
+  Six messages suffisent généralement
+  pour maintenir une conversation naturelle.
+
+  Cela évite de renvoyer douze longues réponses
+  à chaque intervention vocale.
+  */
   return history
     .filter(item =>
       item &&
@@ -1053,12 +1079,13 @@ function sanitizeHistory(history) {
         item.role
       )
     )
-    .slice(-12)
+    .slice(-6)
     .map(item => ({
       role: item.role,
+
       content: sanitizeSensitiveText(
         item.content,
-        1500
+        700
       )
     }));
 }
@@ -1110,7 +1137,7 @@ function sanitizeMemory(memory) {
     },
 
     preferences: preferences
-      .slice(-30)
+      .slice(-10)
       .map(item => ({
         category: sanitizeSensitiveText(
           item?.category || "",
@@ -1126,7 +1153,7 @@ function sanitizeMemory(memory) {
           typeof item?.value === "string"
             ? sanitizeSensitiveText(
                 item.value,
-                300
+                  180
               )
             : item?.value,
 
@@ -1594,16 +1621,28 @@ function buildReceiptReadingReply(context) {
 }
 
 function buildScheduledReceiptReadingReply(context) {
+  /*
+  Compatibilité avec les deux formes :
+  - context.scheduledReceipt ;
+  - context.receipt utilisé actuellement
+    par le dashboard.
+  */
   const scheduledReceipt =
     context?.scheduledReceipt &&
     typeof context.scheduledReceipt === "object"
       ? context.scheduledReceipt
-      : {};
+      : (
+          context?.receipt &&
+          typeof context.receipt === "object"
+            ? context.receipt
+            : {}
+        );
 
 
-  const receiptText = cleanReceiptText(
-    scheduledReceipt.text || ""
-  );
+  const receiptText =
+    cleanReceiptText(
+      scheduledReceipt.text || ""
+    );
 
 
   if (!receiptText) {
@@ -1618,16 +1657,14 @@ function buildScheduledReceiptReadingReply(context) {
 
 
   return (
-    "La facture du transfert programmé est maintenant affichée. " +
-    "Je vais vous lire toutes les informations avant d’enregistrer la programmation. " +
+    "La facture du transfert programmé est affichée. " +
     receiptText +
-    ". L’argent ne sera pas envoyé maintenant. " +
-    "Il sera envoyé automatiquement à la date programmée, " +
-    "sous réserve que le compte soit valide et que le solde soit suffisant au moment de l’exécution. " +
+    ". Aucun argent n’est envoyé maintenant. " +
     "Pour confirmer, dites exactement : je confirme le transfert programmé. " +
     "Pour annuler, dites : annule le transfert programmé."
   );
 }
+
 
 /* =========================================================
    📨 LECTURE DÉTERMINISTE DES MESSAGES
@@ -1651,10 +1688,10 @@ function getMessagesFromContext(context) {
 
       name: sanitizeSensitiveText(
         message?.name ||
-        "utilisateur inconnu",
+        message?.phone ||
+        "Utilisateur",
         100
       ),
-
       phone: normalizePhone(
         message?.phone
       ),
@@ -1746,7 +1783,7 @@ function buildMessagesSummaryReply(context) {
         message =>
           message.name ||
           message.phone ||
-          "utilisateur inconnu"
+          "Utilisateur"
       )
     )
   ];
@@ -1848,6 +1885,246 @@ function buildOneMessageReply(
 }
 
 /* =========================================================
+   ⚡ COMMANDES RAPIDES SANS APPEL OPENAI
+========================================================= */
+
+function textContainsOneOf(text, expressions) {
+  const normalized =
+    normalizeDecisionText(text);
+
+  return expressions.some(expression =>
+    normalized.includes(
+      normalizeDecisionText(expression)
+    )
+  );
+}
+
+
+function handleFastCommand({
+  userText,
+  context
+}) {
+  const normalized =
+    normalizeDecisionText(userText);
+
+  if (!normalized) {
+    return null;
+  }
+
+
+  /*
+  Arrêt de Mady
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "arrete mady",
+      "arrete l assistant",
+      "ferme l assistant",
+      "stop mady",
+      "tais toi",
+      "silence"
+    ])
+  ) {
+    return createResponse({
+      intent: "STOP_ASSISTANT",
+      action: "stopAssistant",
+      target: null,
+      reply: "Très bien. Je vous laisse tranquille.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Retour à l’accueil
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "retour accueil",
+      "retour a l accueil",
+      "page principale",
+      "retour au menu",
+      "reviens a l accueil"
+    ])
+  ) {
+    return createResponse({
+      intent: "GO_HOME",
+      action: "goHome",
+      target: null,
+      reply: "Nous voici de retour à l’accueil.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Lecture de tous les messages
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "lis mes messages",
+      "lire mes messages",
+      "lis les messages",
+      "lis mes notifications",
+      "lire mes notifications"
+    ])
+  ) {
+    return createResponse({
+      intent: "READ_MESSAGES",
+      action: "readMessages",
+      target: "notifBox",
+
+      reply:
+        buildAllMessagesReply(
+          context
+        ),
+
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Résumé des messages
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "resume mes messages",
+      "resumer mes messages",
+      "resume les messages",
+      "resume mes notifications",
+      "fais le resume des messages"
+    ])
+  ) {
+    return createResponse({
+      intent: "SUMMARIZE_MESSAGES",
+      action: "summarizeMessages",
+      target: "notifBox",
+
+      reply:
+        buildMessagesSummaryReply(
+          context
+        ),
+
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Ouverture de la boîte de messages
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "ouvre mes messages",
+      "ouvre les messages",
+      "ouvre la messagerie",
+      "ouvre mes notifications",
+      "montre mes messages",
+      "affiche mes messages"
+    ])
+  ) {
+    return createResponse({
+      intent: "OPEN_MESSAGES",
+      action: "openModal",
+      target: "notifBox",
+      reply: "Votre boîte de messages est ouverte.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Coffre-fort
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "ouvre le coffre",
+      "ouvre mon coffre",
+      "ouvre mes coffres",
+      "coffre fort",
+      "mes coffres"
+    ])
+  ) {
+    return createResponse({
+      intent: "OPEN_VAULT",
+      action: "openModal",
+      target: "vaultBox",
+      reply: "Votre coffre-fort est ouvert.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  QR MaliPay
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "ouvre mon qr",
+      "montre mon qr",
+      "affiche mon qr",
+      "mon code qr",
+      "ouvre le qr"
+    ])
+  ) {
+    return createResponse({
+      intent: "OPEN_QR",
+      action: "showQR",
+      target: null,
+      reply: "Voici votre QR MaliPay.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Portail de services
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "ouvre les services",
+      "portail des services",
+      "ouvre le portail",
+      "montre les services"
+    ])
+  ) {
+    return createResponse({
+      intent: "OPEN_SERVICES",
+      action: "openServicesPortal",
+      target: null,
+      reply: "Le portail des services est ouvert.",
+      data: createDefaultData()
+    });
+  }
+
+
+  /*
+  Historique
+  */
+  if (
+    textContainsOneOf(normalized, [
+      "ouvre l historique",
+      "affiche l historique",
+      "montre mon historique",
+      "mes transactions",
+      "mes activites"
+    ])
+  ) {
+    return createResponse({
+      intent: "OPEN_HISTORY",
+      action: "toggleHistory",
+      target: null,
+      reply: "Voici votre historique.",
+      data: createDefaultData()
+    });
+  }
+
+
+  return null;
+}
+
+/* =========================================================
    ⚙️ TRAITEMENT DÉTERMINISTE DES ÉVÉNEMENTS SENSIBLES
 ========================================================= */
 
@@ -1891,13 +2168,20 @@ function handleDeterministicRequest({
 
 
   const scheduledReceiptVisible =
-    context?.scheduledReceipt
-      ?.visible === true;
+  context?.scheduledReceipt?.visible ===
+    true ||
+  (
+    context?.receipt?.visible === true &&
+    context?.receipt
+      ?.hasPendingScheduledTransfer === true
+  );
 
 
   const hasPendingScheduledTransfer =
-    context?.scheduledReceipt
-      ?.hasPendingScheduledTransfer === true;
+  context?.scheduledReceipt
+    ?.hasPendingScheduledTransfer === true ||
+  context?.receipt
+    ?.hasPendingScheduledTransfer === true;
 
 
   /*
@@ -2596,17 +2880,87 @@ function enforceFinancialSafety({
   }
 
   /*
+Même protection pour le transfert programmé.
+*/
+if (
+  normalized.action ===
+    "confirmScheduledTransfer" ||
+  normalized.intent ===
+    "SCHEDULED_TRANSFER_CONFIRM"
+) {
+  const decision =
+    context?.scheduledTransferDecision ||
+    getExplicitScheduledTransferDecision(
+      userText
+    );
+
+
+  const receiptVisible =
+    context?.scheduledReceipt?.visible ===
+      true ||
+    (
+      context?.receipt?.visible === true &&
+      context?.receipt
+        ?.hasPendingScheduledTransfer === true
+    );
+
+
+  const hasPendingScheduledTransfer =
+    context?.scheduledReceipt
+      ?.hasPendingScheduledTransfer === true ||
+    context?.receipt
+      ?.hasPendingScheduledTransfer === true;
+
+
+  if (
+    decision !== "confirm" ||
+    !receiptVisible ||
+    !hasPendingScheduledTransfer
+  ) {
+    return createResponse({
+      intent:
+        "SCHEDULED_TRANSFER_SHOW_RECEIPT",
+
+      action:
+        "requestScheduledTransferConfirmation",
+
+      target:
+        "receiptBox",
+
+      reply:
+        "Je ne peux pas enregistrer cette programmation sans une confirmation explicite et une facture programmée encore active. Dites exactement : je confirme le transfert programmé, ou : annule le transfert programmé.",
+
+      data: {
+        scheduledTransfer:
+          context?.pendingScheduledTransfer ||
+          normalized.data.scheduledTransfer,
+
+        missingScheduledFields: [],
+
+        requiresExplicitConfirmation:
+          true
+      }
+    });
+  }
+}
+
+  /*
   Empêche une réponse de prétendre que l’argent
   a été envoyé avant l’exécution JavaScript.
   */
   if (
-    [
-      "TRANSFER_READY",
-      "TRANSFER_SHOW_RECEIPT",
-      "TRANSFER_COLLECTING",
-      "TRANSFER_INSTANT"
-    ].includes(normalized.intent)
-  ) {
+      [
+        "TRANSFER_READY",
+        "TRANSFER_SHOW_RECEIPT",
+        "TRANSFER_COLLECTING",
+        "TRANSFER_INSTANT",
+
+        "SCHEDULED_TRANSFER_READY",
+        "SCHEDULED_TRANSFER_SHOW_RECEIPT",
+        "SCHEDULED_TRANSFER_COLLECTING",
+        "TRANSFER_SCHEDULED"
+      ].includes(normalized.intent)
+    ) {
     normalized.reply =
       normalized.reply
         .replace(
@@ -2974,6 +3328,84 @@ app.get("/health", (req, res) => {
   });
 });
 
+function buildCompactModelContext(context) {
+  const safe =
+    context &&
+    typeof context === "object"
+      ? context
+      : {};
+
+
+  const rawMessages =
+    Array.isArray(
+      safe?.messages?.messages
+    )
+      ? safe.messages.messages
+      : [];
+
+
+  return {
+    user: safe.user || {},
+
+
+    pendingTransfer:
+      safe.pendingTransfer ||
+      createDefaultTransfer(),
+
+
+    pendingScheduledTransfer:
+      safe.pendingScheduledTransfer ||
+      createDefaultScheduledTransfer(),
+
+
+    receipt:
+      safe.receipt || {},
+
+
+    scheduledReceipt:
+      safe.scheduledReceipt || {},
+
+
+    messages: {
+      count:
+        Number(
+          safe?.messages?.count ||
+          rawMessages.length
+        ),
+
+      /*
+      Vingt messages maximum uniquement lorsque
+      Mady en a besoin.
+      */
+      messages:
+        rawMessages.slice(0, 20)
+    },
+
+
+    memory:
+      safe.memory || {
+        profile: {},
+        preferences: []
+      },
+
+
+    assistantState:
+      safe.assistantState || {},
+
+
+    currentDateTime:
+      safe.currentDateTime || "",
+
+
+    timezone:
+      safe.timezone || "",
+
+
+    personality:
+      safe.personality || {}
+  };
+}
+
 /* =========================================================
    🤖 ROUTE PRINCIPALE DE MADY
 ========================================================= */
@@ -3015,6 +3447,11 @@ app.post(
         memory: safeMemory
       };
 
+      const modelContext =
+      buildCompactModelContext(
+        runtimeContext
+      );
+
       /*
       Les confirmations, annulations, lectures de facture
       et événements sensibles sont traités sans dépendre
@@ -3029,6 +3466,23 @@ app.post(
       if (deterministicResponse) {
         return res.status(200).json(
           deterministicResponse
+        );
+      }
+
+      /*
+      Les commandes simples ne nécessitent pas
+      d’appeler le modèle OpenAI.
+      */
+      const fastResponse =
+        handleFastCommand({
+          userText,
+          context: runtimeContext
+        });
+
+
+      if (fastResponse) {
+        return res.status(200).json(
+          fastResponse
         );
       }
 
@@ -3058,28 +3512,41 @@ app.post(
                 4000
               ),
 
-            context: runtimeContext
+            context: modelContext
           })
         }
       ];
 
       const completion =
-        await openai.chat.completions.create({
-          model: OPENAI_MODEL,
+      await openai.chat.completions.create({
+        model:
+          OPENAI_MODEL,
 
-          temperature: 0.65,
+        /*
+        Une température légèrement réduite
+        rend les actions structurées plus stables,
+        tout en conservant une conversation naturelle.
+        */
+        temperature:
+          0.45,
 
-          max_completion_tokens: 1200,
+        /*
+        Les réponses vocales doivent être courtes.
+        Le JSON complet entre largement dans cette limite.
+        */
+        max_completion_tokens:
+          550,
 
-          messages,
+        messages,
 
-          response_format: {
-            type: "json_schema",
+        response_format: {
+          type:
+            "json_schema",
 
-            json_schema:
-              RESPONSE_JSON_SCHEMA
-          }
-        });
+          json_schema:
+            RESPONSE_JSON_SCHEMA
+        }
+      });
 
       const raw =
         completion.choices?.[0]
